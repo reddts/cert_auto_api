@@ -113,7 +113,7 @@ ACME_KEYLENGTH=ec-256
 ### 5. 启动 API
 
 ```bash
-python3 -m cert_auto_api.cli serve
+python3 main.py serve
 ```
 
 ### 6. 宝塔环境注意事项
@@ -192,7 +192,7 @@ ACME_KEYLENGTH=ec-256
 ### 6. 启动 API
 
 ```bash
-python3 -m cert_auto_api.cli serve
+python3 main.py serve
 ```
 
 ### 7. 独立环境注意事项
@@ -248,4 +248,3 @@ python3 -m cert_auto_api.cli serve
 - 服务端证书是否已经生成到 `CERT_OUTPUT_DIR`
 - 当前是否仍在后台续签中
 - `certificate/download` 是否返回了 `409`
-

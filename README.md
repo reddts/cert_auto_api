@@ -134,6 +134,12 @@ ACME_KEYLENGTH=ec-256
 ### 启动服务端 API
 
 ```bash
+python3 main.py serve
+```
+
+等价命令：
+
+```bash
 python3 -m cert_auto_api.cli serve
 ```
 
@@ -202,7 +208,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 手动执行：
 
 ```bash
-python3 -m cert_auto_api.cli check-renew
+python3 main.py check-renew
 ```
 
 直接执行续签脚本：
@@ -428,6 +434,12 @@ The server automatically checks these common paths:
 ### Start the API Server
 
 ```bash
+python3 main.py serve
+```
+
+Equivalent command:
+
+```bash
 python3 -m cert_auto_api.cli serve
 ```
 
@@ -496,7 +508,7 @@ Bundle contents:
 Run once manually:
 
 ```bash
-python3 -m cert_auto_api.cli check-renew
+python3 main.py check-renew
 ```
 
 Run the renewal script directly:
