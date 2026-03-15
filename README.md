@@ -47,6 +47,7 @@ cert_auto_api/
 1. 服务端读取 `.env` 配置。
 2. 服务端自动寻找可用的 `acme.sh`。
 3. 使用 Cloudflare DNS 验证签发主域名和泛域名证书。
+   相关准备说明见 [docs/cloudflare_wildcard_dns_setup.md](/mnt/f/workwww/cert_auto_api/docs/cloudflare_wildcard_dns_setup.md)。
 4. 证书保存为 `certificate.cert`，私钥保存为 `private.key`。
 5. 服务端通过定时任务每天检查一次证书有效期。
 6. 当证书剩余有效期小于等于 15 天时自动续签。
@@ -99,7 +100,7 @@ API_PORT=8080
 API_TOKEN=replace_with_32_char_token
 API_PREFIX=/api/v1
 
-CERT_DOMAINS=links-app.top,*.links-app.top
+CERT_DOMAINS=example.com,*.example.com
 CF_TOKEN=replace_with_cloudflare_token
 CERT_OUTPUT_DIR=./certs
 RENEW_THRESHOLD_DAYS=15
@@ -120,8 +121,9 @@ ACME_KEYLENGTH=ec-256
 
 - 主域名不再单独配置
 - 程序会自动从 `CERT_DOMAINS` 中选择第一个非通配符域名作为主域名
-- 例如 `CERT_DOMAINS=links-app.top,*.links-app.top` 时，主域名会自动识别为 `links-app.top`
+- 例如 `CERT_DOMAINS=example.com,*.example.com` 时，主域名会自动识别为 `example.com`
 - `acme.sh` 路径不再单独配置，程序会自动识别
+- 服务端部署和配置示例见 [docs/server_api_deployment.md](/mnt/f/workwww/cert_auto_api/docs/server_api_deployment.md)
 
 默认会自动尝试以下路径：
 
@@ -289,22 +291,6 @@ XRAYR_SERVICE_NAME="XrayR" \
 - 重新执行安装脚本时，会复用原有时间，不会重新随机
 - 如果客户端 `cron` 已存在，则不会重复添加
 
-### 开源发布建议
-
-发布到 GitHub 前建议检查：
-
-- 不要提交真实 `.env`
-- 不要提交真实证书和私钥
-- 不要提交日志与压缩包
-- 保留 `.env.example` 作为公开示例配置
-- 确认仓库历史中不存在 Cloudflare Token 等敏感信息
-
-如果 `.env` 已被 Git 跟踪：
-
-```bash
-git rm --cached .env
-```
-
 ### 安全说明
 
 - 请使用强随机 `API_TOKEN`
@@ -355,6 +341,7 @@ cert_auto_api/
 1. The server loads configuration from `.env`.
 2. The server detects an available `acme.sh` installation.
 3. Certificates are issued or renewed through Cloudflare DNS validation.
+   See [docs/cloudflare_wildcard_dns_setup.md](/mnt/f/workwww/cert_auto_api/docs/cloudflare_wildcard_dns_setup.md) for Cloudflare DNS preparation steps.
 4. The fullchain is saved as `certificate.cert`, and the private key as `private.key`.
 5. A scheduled task checks certificate expiration once per day.
 6. Certificates are renewed only when the remaining lifetime is 15 days or less.
@@ -430,6 +417,7 @@ Notes:
 - The program automatically selects the first non-wildcard entry in `CERT_DOMAINS` as the primary domain.
 - For example, with `CERT_DOMAINS=example.com,*.example.com`, the primary domain is `example.com`.
 - `acme.sh` is detected automatically and no longer configured manually.
+- Server-side deployment examples are documented in [docs/server_api_deployment.md](/mnt/f/workwww/cert_auto_api/docs/server_api_deployment.md).
 
 The server automatically checks these common paths:
 
@@ -596,22 +584,6 @@ Client cron behavior:
 - the selected time is persisted in `client/.client_sync_schedule`
 - rerunning the installer reuses the same time instead of generating a new one
 - if the client cron already exists, the installer does nothing
-
-### Open Source Publishing Notes
-
-Before publishing to GitHub:
-
-- do not commit the real `.env`
-- do not commit real certificates or private keys
-- do not commit logs or archive files
-- keep `.env.example` as the public configuration template
-- verify that no secrets exist in repository history
-
-If `.env` is already tracked:
-
-```bash
-git rm --cached .env
-```
 
 ### Security Notes
 
