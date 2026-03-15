@@ -6,8 +6,9 @@ from datetime import UTC, datetime
 import shutil
 from pathlib import Path
 from contextlib import asynccontextmanager
+import time
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
@@ -20,13 +21,21 @@ manager = CertManager(settings)
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 INSTALL_SERVER_CRON_SCRIPT = BASE_DIR / "scripts" / "install_server_cron.sh"
+_CRON_CHECK_TTL_SECONDS = 300.0
+_last_cron_check_at = 0.0
 
 
 def cleanup_archive(path: str) -> None:
     shutil.rmtree(str(Path(path).parent), ignore_errors=True)
 
 
-def ensure_server_cron_installed() -> None:
+def ensure_server_cron_installed(force: bool = False) -> None:
+    global _last_cron_check_at
+
+    now = time.monotonic()
+    if not force and now - _last_cron_check_at < _CRON_CHECK_TTL_SECONDS:
+        return
+
     if not INSTALL_SERVER_CRON_SCRIPT.is_file():
         logger.warning("cron installer script not found: %s", INSTALL_SERVER_CRON_SCRIPT)
         return
@@ -38,6 +47,7 @@ def ensure_server_cron_installed() -> None:
             capture_output=True,
             text=True,
         )
+        _last_cron_check_at = now
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else ""
         logger.warning("failed to ensure renew cron is installed: %s", stderr or exc)
@@ -45,7 +55,7 @@ def ensure_server_cron_installed() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    ensure_server_cron_installed()
+    ensure_server_cron_installed(force=True)
     yield
 
 
@@ -92,9 +102,10 @@ def root_info() -> dict[str, str]:
 
 @app.get(
     f"{settings.api_prefix}/certificate/info",
-    dependencies=[Depends(verify_token), Depends(ensure_renew_cron), Depends(trigger_certificate_renewal_if_needed)],
+    dependencies=[Depends(verify_token), Depends(ensure_renew_cron)],
 )
-def certificate_info() -> dict[str, object]:
+def certificate_info(background_tasks: BackgroundTasks) -> dict[str, object]:
+    background_tasks.add_task(trigger_certificate_renewal_if_needed)
     status_info = manager.get_cert_status()
     renewal_status = manager.get_renewal_status()
     try:
@@ -127,10 +138,11 @@ def check_renew() -> dict[str, str | int | bool | None]:
 
 @app.get(
     f"{settings.api_prefix}/certificate/download",
-    dependencies=[Depends(verify_token), Depends(ensure_renew_cron), Depends(trigger_certificate_renewal_if_needed)],
+    dependencies=[Depends(verify_token), Depends(ensure_renew_cron)],
 )
 def download_certificate() -> FileResponse:
     if not settings.cert_path.exists() or not settings.key_path.exists():
+        trigger_certificate_renewal_if_needed()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="certificate is missing or renewal is in progress; retry later",

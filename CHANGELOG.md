@@ -14,6 +14,8 @@
 - Removed BaoTa `acme_v2.py` from the main issuance path in favor of `acme.sh` or the built-in engine.
 - Renamed the built-in engine state directory from `.builtin_acme` to `.engine_state`.
 - Added a client-side `SKIP_RESTART=1` option for safe certificate sync testing without restarting `xrayr`.
+- Cached certificate engine detection and cron self-checks to reduce request latency.
+- Changed `certificate/info` renewal triggering to run after the response is sent instead of inside the synchronous request path.
 - Added background renewal status tracking and log file output.
 - Added `renewal_status`, `renewal_running`, `renewal_log_file`, and `engine` fields to certificate info responses.
 - Added root path `/` to avoid repeated `404 Not Found` noise from probes.

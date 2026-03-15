@@ -11,6 +11,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+import time
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
@@ -45,6 +46,9 @@ class CertManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.base_dir = Path(__file__).resolve().parent.parent
+        self._engine_cache: tuple[str, str] | None = None
+        self._engine_cache_at = 0.0
+        self._engine_cache_ttl = 300.0
 
     def ensure_ready(self) -> None:
         if not self.settings.api_token:
@@ -118,10 +122,18 @@ class CertManager:
             log_file.write(f"[{timestamp}] {message}\n")
 
     def get_certificate_engine(self) -> tuple[str, str]:
+        now = time.monotonic()
+        if self._engine_cache and now - self._engine_cache_at < self._engine_cache_ttl:
+            return self._engine_cache
+
         try:
-            return "acme_sh", self.detect_acme_sh()
+            engine = ("acme_sh", self.detect_acme_sh())
         except FileNotFoundError:
-            return "builtin_acme", "cert_auto_api.builtin_acme"
+            engine = ("builtin_acme", "cert_auto_api.builtin_acme")
+
+        self._engine_cache = engine
+        self._engine_cache_at = now
+        return engine
 
     def get_acme_sh_candidates(self) -> list[str]:
         # Probe high-probability locations first: BaoTa, root install, then current-user install.
