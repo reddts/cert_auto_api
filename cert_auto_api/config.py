@@ -27,6 +27,10 @@ class Settings:
     renew_threshold_days: int
     acme_dns_provider: str
     acme_keylength: str
+    acme_directory_url: str
+    acme_contact_email: str
+    dns_propagation_timeout: int
+    dns_poll_interval: int
     cert_file_name: str = "certificate.cert"
     key_file_name: str = "private.key"
 
@@ -70,4 +74,11 @@ def load_settings() -> Settings:
         renew_threshold_days=int(os.getenv("RENEW_THRESHOLD_DAYS", "15")),
         acme_dns_provider=os.getenv("ACME_DNS_PROVIDER", "dns_cf").strip(),
         acme_keylength=os.getenv("ACME_KEYLENGTH", "ec-256").strip(),
+        acme_directory_url=os.getenv(
+            "ACME_DIRECTORY_URL",
+            "https://acme-v02.api.letsencrypt.org/directory",
+        ).strip(),
+        acme_contact_email=os.getenv("ACME_CONTACT_EMAIL", "").strip(),
+        dns_propagation_timeout=int(os.getenv("DNS_PROPAGATION_TIMEOUT", "180")),
+        dns_poll_interval=int(os.getenv("DNS_POLL_INTERVAL", "10")),
     )

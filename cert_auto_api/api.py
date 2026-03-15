@@ -85,16 +85,26 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+def root_info() -> dict[str, str]:
+    return {"status": "ok", "message": "cert_auto_api"}
+
+
 @app.get(
     f"{settings.api_prefix}/certificate/info",
     dependencies=[Depends(verify_token), Depends(ensure_renew_cron), Depends(trigger_certificate_renewal_if_needed)],
 )
-def certificate_info() -> dict[str, str | int | bool | None | list[str]]:
+def certificate_info() -> dict[str, object]:
     status_info = manager.get_cert_status()
     renewal_status = manager.get_renewal_status()
+    try:
+        engine_name, _ = manager.get_certificate_engine()
+    except Exception as exc:
+        engine_name = f"unavailable: {exc}"
     return {
         "domains": settings.cert_domains,
         "primary_domain": settings.primary_domain,
+        "engine": engine_name,
         "exists": status_info.exists,
         "expires_at": status_info.expires_at.isoformat() if status_info.expires_at else None,
         "expires_in_days": status_info.expires_in_days,
@@ -102,6 +112,7 @@ def certificate_info() -> dict[str, str | int | bool | None | list[str]]:
         "fingerprint_sha256": status_info.fingerprint_sha256,
         "renewal_running": manager.is_renewal_running(),
         "renewal_status": renewal_status,
+        "renewal_log_file": str(manager.renewal_log_path),
         "checked_at": datetime.now(UTC).isoformat(),
     }
 

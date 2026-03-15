@@ -8,7 +8,8 @@
 适用目标：
 
 - 运行服务端 API
-- 自动识别并调用可用的 `acme.sh`
+- 优先调用可用的 `acme.sh`
+- 当 `acme.sh` 不可用时，回退到项目内置的 Python ACME 引擎
 - 使用 Cloudflare DNS API 自动签发和续签证书
 
 ## 一、通用要求
@@ -17,9 +18,18 @@
 
 - Linux 系统
 - Python 3.10+
-- 已安装 `acme.sh`
 - 已接入 Cloudflare DNS
 - 已准备好 `CF_TOKEN`
+
+运行用户建议：
+
+- 默认推荐使用 `root` 运行服务端 API
+- 如果使用 `www` 等低权限用户，需要自行确认权限链完整
+- 至少应具备以下权限：
+  - 执行 `acme.sh`
+  - 写入 `CERT_OUTPUT_DIR`
+  - 写入当前运行用户的 `crontab`
+  - 在需要时执行相关服务管理动作
 
 项目关键配置位于 `.env`：
 
@@ -36,6 +46,10 @@ RENEW_THRESHOLD_DAYS=15
 
 ACME_DNS_PROVIDER=dns_cf
 ACME_KEYLENGTH=ec-256
+ACME_CONTACT_EMAIL=
+ACME_DIRECTORY_URL=https://acme-v02.api.letsencrypt.org/directory
+DNS_PROPAGATION_TIMEOUT=180
+DNS_POLL_INTERVAL=10
 ```
 
 说明：
@@ -60,7 +74,18 @@ ACME_KEYLENGTH=ec-256
 /www/server/panel/.acme.sh/acme.sh
 ```
 
-因此在宝塔环境中，一般不需要额外指定路径。
+本项目在宝塔环境中的实际优先顺序是：
+
+1. 优先检测 `/www/server/panel/.acme.sh/acme.sh`
+2. 如果存在，则直接使用 `acme.sh`
+3. 如果不存在可用的 `acme.sh`，则回退到项目内置的 Python ACME 引擎
+
+用户建议：
+
+- 在宝塔环境中，若只是从 Web 目录运行 Python 项目，很多人会直觉使用 `www`
+- 但本项目更推荐使用 `root`
+- 原因是服务端需要处理 `acme.sh`、自动安装 `cron`、写证书和后台续签
+- 如果你坚持使用 `www`，请先确认 `www` 已具备这些权限，否则容易出现 API 可访问但续签不生效的问题
 
 ### 2. 建议部署目录
 
@@ -108,6 +133,10 @@ RENEW_THRESHOLD_DAYS=15
 
 ACME_DNS_PROVIDER=dns_cf
 ACME_KEYLENGTH=ec-256
+ACME_CONTACT_EMAIL=
+ACME_DIRECTORY_URL=https://acme-v02.api.letsencrypt.org/directory
+DNS_PROPAGATION_TIMEOUT=180
+DNS_POLL_INTERVAL=10
 ```
 
 ### 5. 启动 API
@@ -187,6 +216,10 @@ RENEW_THRESHOLD_DAYS=15
 
 ACME_DNS_PROVIDER=dns_cf
 ACME_KEYLENGTH=ec-256
+ACME_CONTACT_EMAIL=
+ACME_DIRECTORY_URL=https://acme-v02.api.letsencrypt.org/directory
+DNS_PROPAGATION_TIMEOUT=180
+DNS_POLL_INTERVAL=10
 ```
 
 ### 6. 启动 API
@@ -200,6 +233,8 @@ python3 main.py serve
 - 若使用 root 安装 `acme.sh`，建议 API 也由同一权限级别用户运行
 - 若 `acme.sh` 安装在当前用户目录，确保 API 进程由对应用户启动
 - 若系统启用了防火墙，需要放行 `API_PORT`
+- 若你不确定使用哪个用户运行，优先选择 `root`
+- 仅在你明确处理好了权限隔离时，再考虑改为 `www` 或其他低权限用户
 
 ## 四、服务端自动任务行为
 

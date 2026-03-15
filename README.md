@@ -2,9 +2,9 @@
 
 [中文](#中文说明) | [English](#english)
 
-Automatic certificate issuance and renewal API built with Python, compatible with both BaoTa `acme.sh` and self-installed `acme.sh`, with a client sync script for pulling updated certificates and restarting `XrayR`.
+Automatic certificate issuance and renewal API built with Python. It prefers `acme.sh` when available and falls back to a built-in Cloudflare API Token ACME engine, with a client sync script for pulling updated certificates and restarting `XrayR`.
 
-一个基于 Python 的自动证书签发与续签 API，兼容宝塔环境中的 `acme.sh` 和自安装 `acme.sh`，并提供客户端同步脚本，用于拉取最新证书并重启 `XrayR`。
+一个基于 Python 的自动证书签发与续签 API。优先使用 `acme.sh`，若不存在则回退到项目内置的 Cloudflare API Token ACME 引擎，并提供客户端同步脚本用于拉取最新证书并重启 `XrayR`。
 
 ## 中文说明
 
@@ -14,7 +14,8 @@ Automatic certificate issuance and renewal API built with Python, compatible wit
 
 它支持：
 
-- 自动检测宝塔 `acme.sh` 或自安装 `acme.sh`
+- 自动检测宝塔或自安装 `acme.sh`
+- 当 `acme.sh` 不可用时，自动切换到内置 Python ACME 引擎
 - 通过 Cloudflare DNS API 签发主域名与泛域名证书
 - 仅在证书剩余有效期小于等于 15 天时执行续签
 - 通过 API 提供证书到期时间查询和证书下载
@@ -37,6 +38,7 @@ cert_auto_api/
 ├── client/                       # 客户端同步脚本
 ├── scripts/                      # 服务端辅助脚本
 ├── .env.example                  # 环境变量示例
+├── CHANGELOG.md
 ├── requirements.txt              # Python 依赖
 ├── LICENSE
 └── README.md
@@ -45,7 +47,7 @@ cert_auto_api/
 ### 工作流程
 
 1. 服务端读取 `.env` 配置。
-2. 服务端自动寻找可用的 `acme.sh`。
+2. 服务端优先寻找可用的 `acme.sh`，找不到时回退到内置 Python ACME 引擎。
 3. 使用 Cloudflare DNS 验证签发主域名和泛域名证书。
    相关准备说明见 [docs/cloudflare_wildcard_dns_setup.md](/mnt/f/workwww/cert_auto_api/docs/cloudflare_wildcard_dns_setup.md)。
 4. 证书保存为 `certificate.cert`，私钥保存为 `private.key`。
@@ -68,7 +70,7 @@ cert_auto_api/
 
 - Linux
 - Python 3.10+
-- 已安装并可正常使用的 `acme.sh`
+- `acme.sh` 可选，若不存在则由项目内置引擎接管
 - Cloudflare Token
 - `curl`
 - `tar`
@@ -107,6 +109,10 @@ RENEW_THRESHOLD_DAYS=15
 
 ACME_DNS_PROVIDER=dns_cf
 ACME_KEYLENGTH=ec-256
+ACME_CONTACT_EMAIL=
+ACME_DIRECTORY_URL=https://acme-v02.api.letsencrypt.org/directory
+DNS_PROPAGATION_TIMEOUT=180
+DNS_POLL_INTERVAL=10
 ```
 
 关键字段：
@@ -116,6 +122,9 @@ ACME_KEYLENGTH=ec-256
 - `API_TOKEN`：访问 API 所需的鉴权 Token
 - `CERT_OUTPUT_DIR`：证书输出目录
 - `RENEW_THRESHOLD_DAYS`：提前多少天触发续签
+- `ACME_CONTACT_EMAIL`：可选，作为 ACME 账号联系邮箱
+- `ACME_DIRECTORY_URL`：可选，默认使用 Let's Encrypt 正式环境
+- `DNS_PROPAGATION_TIMEOUT` / `DNS_POLL_INTERVAL`：内置引擎等待 DNS 生效的超时和轮询间隔
 
 说明：
 
@@ -124,6 +133,15 @@ ACME_KEYLENGTH=ec-256
 - 例如 `CERT_DOMAINS=example.com,*.example.com` 时，主域名会自动识别为 `example.com`
 - `acme.sh` 路径不再单独配置，程序会自动识别
 - 服务端部署和配置示例见 [docs/server_api_deployment.md](/mnt/f/workwww/cert_auto_api/docs/server_api_deployment.md)
+- 已知问题与后续迭代见 [docs/known_issues_and_future_work.md](/mnt/f/workwww/cert_auto_api/docs/known_issues_and_future_work.md)
+- 本次变更记录见 [CHANGELOG.md](/mnt/f/workwww/cert_auto_api/CHANGELOG.md)
+
+证书引擎说明：
+
+- 只要检测到可用的 `acme.sh`，优先使用 `acme.sh`
+- 如果没有可用的 `acme.sh`，则回退到项目内置的 Python ACME 引擎
+- 内置引擎直接使用 Cloudflare API Token 创建 `_acme-challenge` TXT 记录，并把 `fullchain` 和私钥写入 `CERT_OUTPUT_DIR`
+- 宝塔 `acme_v2.py` 不再参与主流程
 
 默认会自动尝试以下路径：
 
@@ -176,6 +194,8 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 
 - `renewal_running`：当前是否有后台续签任务正在执行
 - `renewal_status`：服务端记录的续签状态，包含 `idle`、`running`、`success`、`failed`
+- `renewal_log_file`：服务端后台续签日志文件路径
+- `engine`：当前实际使用的证书引擎，可能是 `acme_sh` 或 `builtin_acme`
 
 手动触发检查续签：
 
@@ -185,6 +205,18 @@ curl -X POST -H "Authorization: Bearer YOUR_TOKEN" \
 ```
 
 这个接口只负责触发后台续签检查，不会等待续签完成。
+
+后台续签日志默认写入：
+
+```text
+CERT_OUTPUT_DIR/.renew.log
+```
+
+内置引擎状态目录与状态文件：
+
+- `CERT_OUTPUT_DIR/.engine_state/`：内置 ACME 引擎的账号状态目录
+- `CERT_OUTPUT_DIR/.renew.log`：后台续签日志
+- `CERT_OUTPUT_DIR/.renew_status.json`：最近一次续签状态快照
 
 下载证书压缩包：
 
@@ -239,6 +271,7 @@ chmod 700 /path/to/cert_auto_api/scripts/install_server_cron.sh
 - 如果证书缺失，或证书到期时间小于等于 15 天，服务端会后台触发一次续签任务
 - 接口本身不会阻塞等待续签完成，避免客户端轮询时占用过多服务端资源
 - 如果 `certificate/download` 被请求时证书仍不存在或仍在续签中，接口会返回 `409`
+- 后台续签的标准输出和错误输出会写入 `CERT_OUTPUT_DIR/.renew.log`
 - 如果系统缺少 `crontab` 或当前用户无权限写入 `crontab`，API 不会中断，但服务端日志会记录告警
 
 实际写入内容：
@@ -303,18 +336,21 @@ XRAYR_SERVICE_NAME="XrayR" \
 - 建议将 API 放在 HTTPS 或反向代理之后
 - `CF_TOKEN` 只授予必要的 DNS 权限
 - 私钥文件应保持最小权限访问
+- 服务端 API 默认建议使用 `root` 运行
+- 如果必须使用 `www` 等低权限用户，请自行确认其具备 `acme.sh` 执行、`crontab` 写入、证书目录写入和服务管理权限
 - 客户端脚本建议由具备写权限和服务重启权限的用户执行
 
 ## English
 
 ### Overview
 
-`cert_auto_api` is a Python-based certificate issuance, renewal, and distribution service designed for wildcard certificates managed through `acme.sh`.
+`cert_auto_api` is a Python-based certificate issuance, renewal, and distribution service for wildcard certificates. It prefers `acme.sh` and falls back to a built-in Cloudflare API Token ACME engine when `acme.sh` is unavailable.
 
 It supports:
 
 - BaoTa-installed `acme.sh`
 - Self-installed `acme.sh`
+- Built-in Python ACME fallback for Cloudflare API Token workflows
 - Cloudflare DNS validation
 - Automatic renewal for certificates expiring within 15 days
 - API-based certificate status query and download
@@ -337,6 +373,7 @@ cert_auto_api/
 ├── client/                       # Client sync script
 ├── scripts/                      # Server helper scripts
 ├── .env.example                  # Example environment variables
+├── CHANGELOG.md
 ├── requirements.txt              # Python dependencies
 ├── LICENSE
 └── README.md
@@ -345,7 +382,7 @@ cert_auto_api/
 ### Workflow
 
 1. The server loads configuration from `.env`.
-2. The server detects an available `acme.sh` installation.
+2. The server prefers an available `acme.sh` installation and falls back to the built-in Python ACME engine when `acme.sh` is unavailable.
 3. Certificates are issued or renewed through Cloudflare DNS validation.
    See [docs/cloudflare_wildcard_dns_setup.md](/mnt/f/workwww/cert_auto_api/docs/cloudflare_wildcard_dns_setup.md) for Cloudflare DNS preparation steps.
 4. The fullchain is saved as `certificate.cert`, and the private key as `private.key`.
@@ -368,7 +405,7 @@ Defense in depth:
 
 - Linux
 - Python 3.10+
-- A working `acme.sh` installation
+- `acme.sh` is optional; the built-in engine takes over when it is unavailable
 - Cloudflare API Token
 - `curl`
 - `tar`
@@ -407,6 +444,10 @@ RENEW_THRESHOLD_DAYS=15
 
 ACME_DNS_PROVIDER=dns_cf
 ACME_KEYLENGTH=ec-256
+ACME_CONTACT_EMAIL=
+ACME_DIRECTORY_URL=https://acme-v02.api.letsencrypt.org/directory
+DNS_PROPAGATION_TIMEOUT=180
+DNS_POLL_INTERVAL=10
 ```
 
 Important fields:
@@ -416,6 +457,9 @@ Important fields:
 - `API_TOKEN`: token required to access the API
 - `CERT_OUTPUT_DIR`: certificate output directory
 - `RENEW_THRESHOLD_DAYS`: renewal threshold in days
+- `ACME_CONTACT_EMAIL`: optional contact email for the ACME account
+- `ACME_DIRECTORY_URL`: optional ACME directory URL, defaults to Let's Encrypt production
+- `DNS_PROPAGATION_TIMEOUT` / `DNS_POLL_INTERVAL`: built-in engine DNS propagation wait controls
 
 Notes:
 
@@ -424,6 +468,15 @@ Notes:
 - For example, with `CERT_DOMAINS=example.com,*.example.com`, the primary domain is `example.com`.
 - `acme.sh` is detected automatically and no longer configured manually.
 - Server-side deployment examples are documented in [docs/server_api_deployment.md](/mnt/f/workwww/cert_auto_api/docs/server_api_deployment.md).
+- Known issues and future work are documented in [docs/known_issues_and_future_work.md](/mnt/f/workwww/cert_auto_api/docs/known_issues_and_future_work.md).
+- This round of changes is recorded in [CHANGELOG.md](/mnt/f/workwww/cert_auto_api/CHANGELOG.md).
+
+Certificate engine notes:
+
+- if `acme.sh` is available, the project uses `acme.sh`
+- if `acme.sh` is unavailable, the project falls back to the built-in Python ACME engine
+- the built-in engine uses the Cloudflare API Token flow to create `_acme-challenge` TXT records and writes the resulting `fullchain` and private key into `CERT_OUTPUT_DIR`
+- BaoTa `acme_v2.py` is no longer part of the main issuance path
 
 The server automatically checks these common paths:
 
@@ -476,6 +529,8 @@ The response includes:
 
 - `renewal_running`: whether a background renewal task is currently running
 - `renewal_status`: server-side renewal state, including `idle`, `running`, `success`, and `failed`
+- `renewal_log_file`: path to the server-side background renewal log file
+- `engine`: the active certificate engine, either `acme_sh` or `builtin_acme`
 
 Trigger a renewal check:
 
@@ -485,6 +540,18 @@ curl -X POST -H "Authorization: Bearer YOUR_TOKEN" \
 ```
 
 This endpoint triggers a background renewal check and returns immediately.
+
+Background renewal logs are written to:
+
+```text
+CERT_OUTPUT_DIR/.renew.log
+```
+
+Built-in engine state and status files:
+
+- `CERT_OUTPUT_DIR/.engine_state/`: built-in ACME engine account state
+- `CERT_OUTPUT_DIR/.renew.log`: background renewal log
+- `CERT_OUTPUT_DIR/.renew_status.json`: last renewal status snapshot
 
 Download the certificate bundle:
 
@@ -539,6 +606,7 @@ Default behavior:
 - if the certificate is missing or expires in 15 days or less, the server starts a background renewal task
 - the API does not block waiting for renewal to finish, which avoids wasting server resources when many clients are polling
 - `certificate/download` returns `409` if the certificate is still missing or renewal is still in progress
+- background renewal stdout and stderr are written to `CERT_OUTPUT_DIR/.renew.log`
 - if `crontab` is unavailable or the current user cannot modify it, the API keeps running and logs a warning instead of failing hard
 
 Installed cron line:
@@ -603,6 +671,8 @@ Client cron behavior:
 - Put the API behind HTTPS or a reverse proxy in production
 - Grant only the minimum required DNS permissions to `CF_TOKEN`
 - Keep private key permissions restricted
+- Running the server API as `root` is the default recommendation
+- If you run it as a lower-privileged user such as `www`, make sure it can execute `acme.sh`, write `crontab`, write the certificate directory, and manage required services
 - Run the client script with a user that can write cert files and restart services
 
 ## License

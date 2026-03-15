@@ -15,6 +15,7 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
+from .builtin_acme import BuiltinAcmeEngine
 from .config import Settings
 
 
@@ -22,6 +23,12 @@ ACME_SH_CANDIDATE_PATHS = [
     "/www/server/panel/.acme.sh/acme.sh",
     "/root/.acme.sh/acme.sh",
     "~/.acme.sh/acme.sh",
+]
+
+ACME_SH_SEARCH_ROOTS = [
+    "/www/server",
+    "/root",
+    "~",
 ]
 
 
@@ -53,6 +60,10 @@ class CertManager:
     @property
     def renewal_status_path(self) -> Path:
         return self.settings.cert_output_dir / ".renew_status.json"
+
+    @property
+    def renewal_log_path(self) -> Path:
+        return self.settings.cert_output_dir / ".renew.log"
 
     def get_renewal_status(self) -> dict[str, str | bool | int | None]:
         default_status: dict[str, str | bool | int | None] = {
@@ -101,14 +112,46 @@ class CertManager:
         temp_path.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
         temp_path.replace(self.renewal_status_path)
 
+    def append_renewal_log(self, message: str) -> None:
+        timestamp = datetime.now(UTC).isoformat()
+        with self.renewal_log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"[{timestamp}] {message}\n")
+
+    def get_certificate_engine(self) -> tuple[str, str]:
+        try:
+            return "acme_sh", self.detect_acme_sh()
+        except FileNotFoundError:
+            return "builtin_acme", "cert_auto_api.builtin_acme"
+
     def get_acme_sh_candidates(self) -> list[str]:
         # Probe high-probability locations first: BaoTa, root install, then current-user install.
-        candidates = [str(Path(path).expanduser()) for path in ACME_SH_CANDIDATE_PATHS]
+        candidates: list[str] = []
+        for path in ACME_SH_CANDIDATE_PATHS:
+            expanded = str(Path(path).expanduser())
+            if expanded not in candidates:
+                candidates.append(expanded)
 
         # Finally fall back to PATH for environments where acme.sh was installed system-wide.
         which_acme = shutil.which("acme.sh")
         if which_acme and which_acme not in candidates:
             candidates.append(which_acme)
+
+        if any(Path(candidate).is_file() for candidate in candidates):
+            return candidates
+
+        # If fixed candidates fail, do a bounded search in common install roots.
+        for root in ACME_SH_SEARCH_ROOTS:
+            search_root = Path(root).expanduser()
+            if not search_root.exists():
+                continue
+
+            try:
+                for found in search_root.rglob("acme.sh"):
+                    found_path = str(found)
+                    if found.is_file() and found_path not in candidates:
+                        candidates.append(found_path)
+            except (OSError, PermissionError):
+                continue
         return candidates
 
     def detect_acme_sh(self) -> str:
@@ -127,17 +170,28 @@ class CertManager:
         if not cert_path.exists():
             return CertStatus(False, None, None, None, None)
 
-        cert_bytes = cert_path.read_bytes()
-        cert = x509.load_pem_x509_certificate(cert_bytes)
+        try:
+            cert_bytes = cert_path.read_bytes()
+            cert = x509.load_pem_x509_certificate(cert_bytes)
+        except (OSError, ValueError):
+            return CertStatus(False, None, None, None, None)
+
         expires_at = cert.not_valid_after_utc.astimezone(UTC)
         expires_in_days = int((expires_at - datetime.now(UTC)).total_seconds() // 86400)
         sha256 = hashlib.sha256(cert_bytes).hexdigest()
         fingerprint_sha256 = cert.fingerprint(hashes.SHA256()).hex()
         return CertStatus(True, expires_at, expires_in_days, sha256, fingerprint_sha256)
 
+    def has_valid_installed_certificate(self) -> bool:
+        if not self.settings.cert_path.exists() or not self.settings.key_path.exists():
+            return False
+        return self.get_cert_status().exists
+
     def needs_renewal(self) -> bool:
+        if not self.has_valid_installed_certificate():
+            return True
         status = self.get_cert_status()
-        if not status.exists or status.expires_in_days is None:
+        if status.expires_in_days is None:
             return True
         return status.expires_in_days <= self.settings.renew_threshold_days
 
@@ -183,6 +237,7 @@ class CertManager:
             started_at=datetime.now(UTC).isoformat(),
             finished_at=None,
         )
+        self.append_renewal_log("renewal task started")
         return True
 
     def release_renewal_lock(self) -> None:
@@ -190,17 +245,19 @@ class CertManager:
 
     def check_and_renew(self) -> dict[str, str | int | bool | None]:
         self.ensure_ready()
+        engine_name, _ = self.get_certificate_engine()
         before = self.get_cert_status()
-        if before.exists and before.expires_in_days is not None:
+        if self.has_valid_installed_certificate() and before.exists and before.expires_in_days is not None:
             if before.expires_in_days > self.settings.renew_threshold_days:
                 return {
                     "changed": False,
                     "action": "skip",
+                    "engine": engine_name,
                     "expires_at": before.expires_at.isoformat() if before.expires_at else None,
                     "expires_in_days": before.expires_in_days,
                 }
 
-        action = "issue" if not before.exists else "renew"
+        action = "issue" if not self.has_valid_installed_certificate() else "renew"
         if action == "issue":
             self.issue_certificate()
         else:
@@ -210,6 +267,7 @@ class CertManager:
         return {
             "changed": True,
             "action": action,
+            "engine": engine_name,
             "expires_at": after.expires_at.isoformat() if after.expires_at else None,
             "expires_in_days": after.expires_in_days,
         }
@@ -235,6 +293,9 @@ class CertManager:
                 message="renewal check finished",
                 finished_at=datetime.now(UTC).isoformat(),
             )
+            self.append_renewal_log(
+                f"renewal task finished successfully: action={result.get('action')} expires_at={result.get('expires_at')}"
+            )
             return result
         except Exception as exc:
             self.update_renewal_status(
@@ -243,6 +304,7 @@ class CertManager:
                 message=str(exc),
                 finished_at=datetime.now(UTC).isoformat(),
             )
+            self.append_renewal_log(f"renewal task failed: {exc}")
             raise
         finally:
             if lock_owned:
@@ -258,6 +320,7 @@ class CertManager:
                 message="certificate is not due for renewal",
                 finished_at=datetime.now(UTC).isoformat(),
             )
+            self.append_renewal_log("renewal skipped: certificate is not due")
             return {
                 "triggered": False,
                 "reason": "not_due",
@@ -267,6 +330,7 @@ class CertManager:
 
         if not self.acquire_renewal_lock():
             status_info = self.get_cert_status()
+            self.append_renewal_log("renewal trigger ignored: task already running")
             return {
                 "triggered": False,
                 "reason": "already_running",
@@ -282,17 +346,21 @@ class CertManager:
         )
 
         try:
+            log_file = self.renewal_log_path.open("a", encoding="utf-8")
             subprocess.Popen(
                 [sys.executable, "-m", "cert_auto_api.cli", "check-renew"],
                 cwd=str(self.base_dir),
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=log_file,
                 start_new_session=True,
             )
         except Exception:
             self.release_renewal_lock()
             raise
+        finally:
+            if 'log_file' in locals():
+                log_file.close()
 
         return {
             "triggered": True,
@@ -302,7 +370,13 @@ class CertManager:
         }
 
     def issue_certificate(self) -> None:
-        acme_sh = self.detect_acme_sh()
+        engine_name, engine_path = self.get_certificate_engine()
+        if engine_name == "builtin_acme":
+            self.append_renewal_log("running builtin ACME engine with Cloudflare API Token")
+            BuiltinAcmeEngine(self.settings, log_callback=self.append_renewal_log).issue()
+            return
+
+        acme_sh = engine_path
         cmd = [acme_sh, "--issue"]
         for domain in self.settings.cert_domains:
             cmd.extend(["-d", domain])
@@ -318,7 +392,13 @@ class CertManager:
         self.install_certificate()
 
     def renew_certificate(self) -> None:
-        acme_sh = self.detect_acme_sh()
+        engine_name, engine_path = self.get_certificate_engine()
+        if engine_name == "builtin_acme":
+            self.append_renewal_log("running builtin ACME engine with Cloudflare API Token")
+            BuiltinAcmeEngine(self.settings, log_callback=self.append_renewal_log).issue()
+            return
+
+        acme_sh = engine_path
         cmd = [acme_sh, "--renew", "-d", self.settings.primary_domain]
         if self.settings.use_ecc:
             cmd.append("--ecc")
@@ -330,7 +410,11 @@ class CertManager:
         self.install_certificate()
 
     def install_certificate(self) -> None:
-        acme_sh = self.detect_acme_sh()
+        engine_name, engine_path = self.get_certificate_engine()
+        if engine_name == "builtin_acme":
+            return
+
+        acme_sh = engine_path
         cert_path = self.settings.cert_path
         key_path = self.settings.key_path
         cert_path.parent.mkdir(parents=True, exist_ok=True)

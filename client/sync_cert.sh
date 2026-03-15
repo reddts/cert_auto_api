@@ -10,6 +10,7 @@ DEFAULT_CERT_DEST_DIR="/etc/XrayR/cert"
 DEFAULT_XRAYR_SERVICE_NAME="XrayR"
 DEFAULT_CERT_FILE_NAME="certificate.cert"
 DEFAULT_KEY_FILE_NAME="private.key"
+DEFAULT_SKIP_RESTART="0"
 
 # Runtime configuration.
 API_BASE_URL="${API_BASE_URL:-$DEFAULT_API_BASE_URL}"
@@ -18,6 +19,7 @@ CERT_DEST_DIR="${CERT_DEST_DIR:-$DEFAULT_CERT_DEST_DIR}"
 XRAYR_SERVICE_NAME="${XRAYR_SERVICE_NAME:-$DEFAULT_XRAYR_SERVICE_NAME}"
 CERT_FILE_NAME="${CERT_FILE_NAME:-$DEFAULT_CERT_FILE_NAME}"
 KEY_FILE_NAME="${KEY_FILE_NAME:-$DEFAULT_KEY_FILE_NAME}"
+SKIP_RESTART="${SKIP_RESTART:-$DEFAULT_SKIP_RESTART}"
 
 if [[ -z "$API_TOKEN" ]]; then
   echo "API_TOKEN is required" >&2
@@ -88,6 +90,11 @@ mkdir -p "$CERT_DEST_DIR"
 tar -xzf "$archive_path" -C "$CERT_DEST_DIR"
 chmod 644 "${CERT_DEST_DIR}/${CERT_FILE_NAME}"
 chmod 600 "${CERT_DEST_DIR}/${KEY_FILE_NAME}"
+
+if [[ "$SKIP_RESTART" == "1" ]]; then
+  echo "certificate updated; restart skipped because SKIP_RESTART=1"
+  exit 0
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl restart "$XRAYR_SERVICE_NAME"
