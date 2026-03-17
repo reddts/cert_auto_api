@@ -17,6 +17,11 @@
 - Cached certificate engine detection and cron self-checks to reduce request latency.
 - Changed `certificate/info` renewal triggering to run after the response is sent instead of inside the synchronous request path.
 - Added a public `client/download` endpoint that returns a sanitized client template tgz package without requiring an API token.
+- Updated the client cron installer to work from a standalone client directory such as `/etc/cert_auto_api_client/`.
+- Changed the client cron installer to remove old client sync cron entries and keep exactly one current entry.
+- Changed the client cron installer to run `sync_cert.sh` once immediately after installation for first-run validation.
+- Changed the client sync script to restart `XrayR` only when the certificate actually changes.
+- Added a dedicated client restart log file for `XrayR` restart failures.
 - Added background renewal status tracking and log file output.
 - Added `renewal_status`, `renewal_running`, `renewal_log_file`, and `engine` fields to certificate info responses.
 - Added root path `/` to avoid repeated `404 Not Found` noise from probes.
