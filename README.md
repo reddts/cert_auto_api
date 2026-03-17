@@ -179,9 +179,29 @@ curl http://127.0.0.1:8080/healthz
 接口列表：
 
 - `GET /healthz`
+- `GET /api/v1/client/download`
 - `GET /api/v1/certificate/info`
 - `POST /api/v1/certificate/check-renew`
 - `GET /api/v1/certificate/download`
+
+下载客户端模板包：
+
+```bash
+curl -L http://127.0.0.1:8080/api/v1/client/download -o cert_auto_api_client.tgz
+```
+
+或：
+
+```bash
+wget -O cert_auto_api_client.tgz http://127.0.0.1:8080/api/v1/client/download
+```
+
+说明：
+
+- 这个接口不需要 `API_TOKEN`
+- 下载的是未配置的客户端模板包
+- 用户下载后仍需自行编辑 `sync_cert.sh` 中的默认值
+- 模板包包含 `sync_cert.sh`、`install_client_cron.sh` 和简单说明文件
 
 查询证书信息：
 
@@ -286,6 +306,29 @@ chmod 700 /path/to/cert_auto_api/scripts/install_server_cron.sh
 
 客户端 `cron` 安装脚本：`client/install_client_cron.sh`
 
+先编辑 `client/sync_cert.sh` 中的默认值，填入你的真实配置：
+
+- `DEFAULT_API_BASE_URL`
+- `DEFAULT_API_TOKEN`
+- `DEFAULT_CERT_DEST_DIR`
+- `DEFAULT_XRAYR_SERVICE_NAME`
+- `DEFAULT_RESTART_LOG_FILE`
+
+建议将客户端脚本固定放在稳定目录，例如：
+
+```text
+/etc/cert_auto_api_client/install_client_cron.sh
+/etc/cert_auto_api_client/sync_cert.sh
+```
+
+建议使用 `root` 执行客户端脚本和安装客户端 `cron`，原因是客户端需要：
+
+- 写入证书目录
+- 覆盖证书文件
+- 重启 `XrayR`
+
+如果后续移动客户端脚本目录，需要重新安装一次客户端 `cron`。
+
 赋予执行权限：
 
 ```bash
@@ -295,10 +338,6 @@ chmod 700 /path/to/cert_auto_api/client/sync_cert.sh
 执行示例：
 
 ```bash
-API_BASE_URL="https://your-api-host/api/v1" \
-API_TOKEN="your_api_token" \
-CERT_DEST_DIR="/etc/XrayR/cert" \
-XRAYR_SERVICE_NAME="xrayr" \
 /path/to/cert_auto_api/client/sync_cert.sh
 ```
 
@@ -306,12 +345,15 @@ XRAYR_SERVICE_NAME="xrayr" \
 
 ```bash
 chmod 700 /path/to/cert_auto_api/client/install_client_cron.sh
-API_BASE_URL="https://your-api-host/api/v1" \
-API_TOKEN="your_api_token" \
-CERT_DEST_DIR="/etc/XrayR/cert" \
-XRAYR_SERVICE_NAME="XrayR" \
 /bin/bash /path/to/cert_auto_api/client/install_client_cron.sh
 ```
+
+安装脚本执行完成后，会立即运行一次 `sync_cert.sh`，用于：
+
+- 立刻检查服务端证书状态
+- 验证客户端脚本配置是否正确
+- 验证证书目录权限和服务重启权限
+- 避免首次部署后还要等待定时任务才发现问题
 
 客户端会：
 
@@ -319,7 +361,8 @@ XRAYR_SERVICE_NAME="XrayR" \
 - 对比本地证书信息
 - 仅在远端证书更新时才下载
 - 下载后解压覆盖目标目录
-- 完成后重启 `xrayr`
+- 仅在证书确实变化时才重启 `xrayr`
+- 如果重启失败，错误输出会写入 `DEFAULT_RESTART_LOG_FILE`
 
 客户端 `cron` 说明：
 
@@ -328,7 +371,8 @@ XRAYR_SERVICE_NAME="XrayR" \
 - 这样可以避免大量客户端在同一时间集中请求服务端
 - 随机时间会持久化到 `client/.client_sync_schedule`
 - 重新执行安装脚本时，会复用原有时间，不会重新随机
-- 如果客户端 `cron` 已存在，则不会重复添加
+- 重新执行安装脚本时，会清理旧的客户端同步任务，并只保留当前路径这一条
+- 定时任务运行时直接读取 `client/sync_cert.sh` 中配置的默认值
 
 ### 安全说明
 
@@ -514,9 +558,29 @@ Authentication:
 Available endpoints:
 
 - `GET /healthz`
+- `GET /api/v1/client/download`
 - `GET /api/v1/certificate/info`
 - `POST /api/v1/certificate/check-renew`
 - `GET /api/v1/certificate/download`
+
+Download the client template package:
+
+```bash
+curl -L http://127.0.0.1:8080/api/v1/client/download -o cert_auto_api_client.tgz
+```
+
+or:
+
+```bash
+wget -O cert_auto_api_client.tgz http://127.0.0.1:8080/api/v1/client/download
+```
+
+Notes:
+
+- this endpoint does not require `API_TOKEN`
+- it returns an unconfigured client template package
+- users still need to edit the default values in `sync_cert.sh`
+- the archive contains `sync_cert.sh`, `install_client_cron.sh`, and a short `README.txt`
 
 Get certificate info:
 
@@ -621,6 +685,29 @@ Client script: `client/sync_cert.sh`
 
 Client cron installer: `client/install_client_cron.sh`
 
+Edit the default values in `client/sync_cert.sh` first and set your real deployment values:
+
+- `DEFAULT_API_BASE_URL`
+- `DEFAULT_API_TOKEN`
+- `DEFAULT_CERT_DEST_DIR`
+- `DEFAULT_XRAYR_SERVICE_NAME`
+- `DEFAULT_RESTART_LOG_FILE`
+
+Keep the client scripts in a stable directory, for example:
+
+```text
+/etc/cert_auto_api_client/install_client_cron.sh
+/etc/cert_auto_api_client/sync_cert.sh
+```
+
+Run the client script and install the client cron job as `root`, because the client needs to:
+
+- write the certificate directory
+- replace certificate files
+- restart `XrayR`
+
+If you move the client script directory later, reinstall the client cron job so the cron entry points to the new path.
+
 Make it executable:
 
 ```bash
@@ -630,10 +717,6 @@ chmod 700 /path/to/cert_auto_api/client/sync_cert.sh
 Example:
 
 ```bash
-API_BASE_URL="https://your-api-host/api/v1" \
-API_TOKEN="your_api_token" \
-CERT_DEST_DIR="/etc/XrayR/cert" \
-XRAYR_SERVICE_NAME="xrayr" \
 /path/to/cert_auto_api/client/sync_cert.sh
 ```
 
@@ -641,10 +724,6 @@ Install the client cron job automatically:
 
 ```bash
 chmod 700 /path/to/cert_auto_api/client/install_client_cron.sh
-API_BASE_URL="https://your-api-host/api/v1" \
-API_TOKEN="your_api_token" \
-CERT_DEST_DIR="/etc/XrayR/cert" \
-XRAYR_SERVICE_NAME="XrayR" \
 /bin/bash /path/to/cert_auto_api/client/install_client_cron.sh
 ```
 
@@ -654,7 +733,8 @@ The client script:
 - compares them with the local certificate
 - downloads only when the remote certificate has changed
 - extracts the bundle into the target directory
-- restarts `xrayr` after update
+- restarts `xrayr` only when the certificate actually changes
+- writes restart errors to `DEFAULT_RESTART_LOG_FILE` when restart fails
 
 Client cron behavior:
 
@@ -663,7 +743,9 @@ Client cron behavior:
 - this spreads requests across many clients and avoids synchronized load spikes
 - the selected time is persisted in `client/.client_sync_schedule`
 - rerunning the installer reuses the same time instead of generating a new one
-- if the client cron already exists, the installer does nothing
+- rerunning the installer removes old client sync entries and keeps exactly one entry for the current path
+- the cron job reads runtime defaults directly from `client/sync_cert.sh`
+- after installing or refreshing the cron entry, the installer immediately runs `sync_cert.sh` once for an initial validation
 
 ### Security Notes
 

@@ -16,6 +16,7 @@
 - Added a client-side `SKIP_RESTART=1` option for safe certificate sync testing without restarting `xrayr`.
 - Cached certificate engine detection and cron self-checks to reduce request latency.
 - Changed `certificate/info` renewal triggering to run after the response is sent instead of inside the synchronous request path.
+- Added a public `client/download` endpoint that returns a sanitized client template tgz package without requiring an API token.
 - Added background renewal status tracking and log file output.
 - Added `renewal_status`, `renewal_running`, `renewal_log_file`, and `engine` fields to certificate info responses.
 - Added root path `/` to avoid repeated `404 Not Found` noise from probes.

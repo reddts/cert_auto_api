@@ -3,7 +3,8 @@ set -euo pipefail
 
 umask 077
 
-# Default configuration values. Override them with environment variables when needed.
+# Default runtime configuration. Set these to your real deployment values if
+# the script will be executed directly by cron.
 DEFAULT_API_BASE_URL="http://127.0.0.1:8080/api/v1"
 DEFAULT_API_TOKEN=""
 DEFAULT_CERT_DEST_DIR="/etc/XrayR/cert"
@@ -11,8 +12,9 @@ DEFAULT_XRAYR_SERVICE_NAME="XrayR"
 DEFAULT_CERT_FILE_NAME="certificate.cert"
 DEFAULT_KEY_FILE_NAME="private.key"
 DEFAULT_SKIP_RESTART="0"
+DEFAULT_RESTART_LOG_FILE="/var/log/cert_sync_restart.log"
 
-# Runtime configuration.
+# Runtime configuration. Environment variables still override these defaults.
 API_BASE_URL="${API_BASE_URL:-$DEFAULT_API_BASE_URL}"
 API_TOKEN="${API_TOKEN:-$DEFAULT_API_TOKEN}"
 CERT_DEST_DIR="${CERT_DEST_DIR:-$DEFAULT_CERT_DEST_DIR}"
@@ -20,6 +22,7 @@ XRAYR_SERVICE_NAME="${XRAYR_SERVICE_NAME:-$DEFAULT_XRAYR_SERVICE_NAME}"
 CERT_FILE_NAME="${CERT_FILE_NAME:-$DEFAULT_CERT_FILE_NAME}"
 KEY_FILE_NAME="${KEY_FILE_NAME:-$DEFAULT_KEY_FILE_NAME}"
 SKIP_RESTART="${SKIP_RESTART:-$DEFAULT_SKIP_RESTART}"
+RESTART_LOG_FILE="${RESTART_LOG_FILE:-$DEFAULT_RESTART_LOG_FILE}"
 
 if [[ -z "$API_TOKEN" ]]; then
   echo "API_TOKEN is required" >&2
@@ -80,6 +83,7 @@ PY
 fi
 
 if [[ -n "$remote_expires_at" && "$remote_expires_at" == "$local_expires_at" && "$remote_fingerprint" == "$local_fingerprint" ]]; then
+  echo "certificate unchanged; restart skipped"
   exit 0
 fi
 
@@ -91,13 +95,26 @@ tar -xzf "$archive_path" -C "$CERT_DEST_DIR"
 chmod 644 "${CERT_DEST_DIR}/${CERT_FILE_NAME}"
 chmod 600 "${CERT_DEST_DIR}/${KEY_FILE_NAME}"
 
+echo "certificate updated"
+
 if [[ "$SKIP_RESTART" == "1" ]]; then
   echo "certificate updated; restart skipped because SKIP_RESTART=1"
   exit 0
 fi
 
+restart_log_dir="$(dirname "$RESTART_LOG_FILE")"
+mkdir -p "$restart_log_dir"
+
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl restart "$XRAYR_SERVICE_NAME"
+  if ! systemctl restart "$XRAYR_SERVICE_NAME" >>"$RESTART_LOG_FILE" 2>&1; then
+    echo "service restart failed; see $RESTART_LOG_FILE" >&2
+    exit 1
+  fi
 else
-  service "$XRAYR_SERVICE_NAME" restart
+  if ! service "$XRAYR_SERVICE_NAME" restart >>"$RESTART_LOG_FILE" 2>&1; then
+    echo "service restart failed; see $RESTART_LOG_FILE" >&2
+    exit 1
+  fi
 fi
+
+echo "service restarted successfully"
