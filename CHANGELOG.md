@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-03-18
+
+- Added `dns_ali` and `dns_dp` support for the `acme.sh` certificate path.
+- Added provider-specific configuration fields: `ALI_KEY`, `ALI_SECRET`, `DP_ID`, and `DP_KEY`.
+- Changed provider validation so `dns_cf` still supports the built-in Python ACME fallback, while `dns_ali` and `dns_dp` now explicitly require an installed `acme.sh`.
+- Changed `acme.sh` environment injection to map credentials by provider instead of always exporting `CF_Token`.
+- Changed the client sync script to run `systemctl daemon-reload` before restarting `XrayR` when `systemd` is available.
+- Updated README and deployment docs to describe Cloudflare, AliDNS, and DNSPod usage more explicitly.
+
 ## 2026-03-15
 
 - Added root-level entry point `main.py`.

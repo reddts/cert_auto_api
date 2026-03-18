@@ -19,6 +19,7 @@
 
 - 功能范围聚焦在 Cloudflare Token 模式
 - 当前未覆盖更多 DNS 提供商
+- 当前不会为 `dns_ali` / `dns_dp` 提供内置引擎兜底
 - 当前未实现更复杂的账户迁移和多目录管理能力
 
 ### 2. `acme.sh` 仍然是推荐首选
@@ -33,7 +34,8 @@
 因此项目当前策略是：
 
 - 只要检测到可用的 `acme.sh`，就优先使用 `acme.sh`
-- 只有在 `acme.sh` 不可用时，才回退到内置 Python ACME 引擎
+- 只有在 `acme.sh` 不可用且 `ACME_DNS_PROVIDER=dns_cf` 时，才回退到内置 Python ACME 引擎
+- 如果使用 `dns_ali` 或 `dns_dp`，则明确要求安装 `acme.sh`
 
 ### 3. Cloudflare Token 模式是当前内置引擎的唯一目标
 
@@ -91,8 +93,9 @@
 
 现阶段：
 
-- `acme.sh` 是 Cloudflare token 模式下的推荐引擎
+- `acme.sh` 是 `dns_cf`、`dns_ali`、`dns_dp` 场景下的推荐引擎
 - 内置 Python ACME 引擎是无 `acme.sh` 时的正式兜底方案
+- 内置 Python ACME 引擎当前仅支持 `dns_cf`
 - 宝塔 `acme_v2.py` 不再参与主流程
 
 后续如果要提高项目独立性和可维护性，应优先推进：

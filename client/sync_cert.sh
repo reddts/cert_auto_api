@@ -106,6 +106,10 @@ restart_log_dir="$(dirname "$RESTART_LOG_FILE")"
 mkdir -p "$restart_log_dir"
 
 if command -v systemctl >/dev/null 2>&1; then
+  if ! systemctl daemon-reload >>"$RESTART_LOG_FILE" 2>&1; then
+    echo "systemd daemon-reload failed; see $RESTART_LOG_FILE" >&2
+    exit 1
+  fi
   if ! systemctl restart "$XRAYR_SERVICE_NAME" >>"$RESTART_LOG_FILE" 2>&1; then
     echo "service restart failed; see $RESTART_LOG_FILE" >&2
     exit 1

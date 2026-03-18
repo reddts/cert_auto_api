@@ -32,6 +32,12 @@ ACME_SH_SEARCH_ROOTS = [
     "~",
 ]
 
+SUPPORTED_DNS_PROVIDERS = {
+    "dns_cf",
+    "dns_ali",
+    "dns_dp",
+}
+
 
 @dataclass(slots=True)
 class CertStatus:
@@ -53,8 +59,7 @@ class CertManager:
     def ensure_ready(self) -> None:
         if not self.settings.api_token:
             raise ValueError("API_TOKEN is required")
-        if not self.settings.cf_token:
-            raise ValueError("CF_TOKEN is required")
+        self._validate_dns_provider_configuration()
         self.settings.cert_output_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -129,6 +134,12 @@ class CertManager:
         try:
             engine = ("acme_sh", self.detect_acme_sh())
         except FileNotFoundError:
+            if self.settings.acme_dns_provider != "dns_cf":
+                raise FileNotFoundError(
+                    "acme.sh is required when ACME_DNS_PROVIDER is "
+                    f"{self.settings.acme_dns_provider}. "
+                    "The built-in ACME engine currently supports only dns_cf."
+                )
             engine = ("builtin_acme", "cert_auto_api.builtin_acme")
 
         self._engine_cache = engine
@@ -464,5 +475,45 @@ class CertManager:
 
     def _run_acme(self, cmd: list[str]) -> None:
         env = os.environ.copy()
-        env["CF_Token"] = self.settings.cf_token
+        env.update(self._get_acme_dns_environment())
         subprocess.run(cmd, check=True, env=env, cwd=str(self.settings.cert_output_dir))
+
+    def _validate_dns_provider_configuration(self) -> None:
+        provider = self.settings.acme_dns_provider
+        if provider not in SUPPORTED_DNS_PROVIDERS:
+            raise ValueError(
+                "ACME_DNS_PROVIDER must be one of: "
+                + ", ".join(sorted(SUPPORTED_DNS_PROVIDERS))
+            )
+
+        if provider == "dns_cf":
+            if not self.settings.cf_token:
+                raise ValueError("CF_TOKEN is required when ACME_DNS_PROVIDER=dns_cf")
+            return
+
+        if provider == "dns_ali":
+            if not self.settings.ali_key or not self.settings.ali_secret:
+                raise ValueError("ALI_KEY and ALI_SECRET are required when ACME_DNS_PROVIDER=dns_ali")
+            self.detect_acme_sh()
+            return
+
+        if provider == "dns_dp":
+            if not self.settings.dp_id or not self.settings.dp_key:
+                raise ValueError("DP_ID and DP_KEY are required when ACME_DNS_PROVIDER=dns_dp")
+            self.detect_acme_sh()
+
+    def _get_acme_dns_environment(self) -> dict[str, str]:
+        provider = self.settings.acme_dns_provider
+        if provider == "dns_cf":
+            return {"CF_Token": self.settings.cf_token}
+        if provider == "dns_ali":
+            return {
+                "Ali_Key": self.settings.ali_key,
+                "Ali_Secret": self.settings.ali_secret,
+            }
+        if provider == "dns_dp":
+            return {
+                "DP_Id": self.settings.dp_id,
+                "DP_Key": self.settings.dp_key,
+            }
+        raise ValueError(f"unsupported ACME_DNS_PROVIDER: {provider}")

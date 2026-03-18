@@ -23,6 +23,10 @@ class Settings:
     api_prefix: str
     cert_domains: list[str]
     cf_token: str
+    ali_key: str
+    ali_secret: str
+    dp_id: str
+    dp_key: str
     cert_output_dir: Path
     renew_threshold_days: int
     acme_dns_provider: str
@@ -70,6 +74,10 @@ def load_settings() -> Settings:
         api_prefix=os.getenv("API_PREFIX", "/api/v1").rstrip("/"),
         cert_domains=domains,
         cf_token=os.getenv("CF_TOKEN", "").strip(),
+        ali_key=os.getenv("ALI_KEY", "").strip(),
+        ali_secret=os.getenv("ALI_SECRET", "").strip(),
+        dp_id=os.getenv("DP_ID", "").strip(),
+        dp_key=os.getenv("DP_KEY", "").strip(),
         cert_output_dir=cert_output_dir,
         renew_threshold_days=int(os.getenv("RENEW_THRESHOLD_DAYS", "15")),
         acme_dns_provider=os.getenv("ACME_DNS_PROVIDER", "dns_cf").strip(),

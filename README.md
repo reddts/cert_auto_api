@@ -2,21 +2,24 @@
 
 [中文](#中文说明) | [English](#english)
 
-Automatic certificate issuance and renewal API built with Python. It prefers `acme.sh` when available and falls back to a built-in Cloudflare API Token ACME engine, with a client sync script for pulling updated certificates and restarting `XrayR`.
+Automatic wildcard certificate issuance and renewal API built with Python. It supports `acme.sh` DNS API providers such as Cloudflare `dns_cf`, AliDNS `dns_ali`, and DNSPod `dns_dp`, and falls back to a built-in Cloudflare API Token ACME engine when `acme.sh` is unavailable.
 
-一个基于 Python 的自动证书签发与续签 API。优先使用 `acme.sh`，若不存在则回退到项目内置的 Cloudflare API Token ACME 引擎，并提供客户端同步脚本用于拉取最新证书并重启 `XrayR`。
+一个基于 Python 的通配符证书自动签发与续签 API。支持 `acme.sh` 的 Cloudflare `dns_cf`、阿里云 DNS `dns_ali`、DNSPod `dns_dp` 等 DNS API 模式；若未安装 `acme.sh`，则仅能回退到项目内置的 Cloudflare API Token ACME 引擎。
+
+关键词：泛域名证书、通配符证书、Cloudflare DNS、AliDNS、DNSPod、`acme.sh`、`dns_cf`、`dns_ali`、`dns_dp`、DNS-01、Let's Encrypt。
 
 ## 中文说明
 
 ### 项目简介
 
-`cert_auto_api` 用于在服务端统一管理泛域名证书的签发、续签和分发。
+`cert_auto_api` 用于在服务端统一管理泛域名证书、通配符证书的签发、续签和分发，适合 Cloudflare、AliDNS、DNSPod 等 DNS API 自动签发场景。
 
 它支持：
 
 - 自动检测宝塔或自安装 `acme.sh`
-- 当 `acme.sh` 不可用时，自动切换到内置 Python ACME 引擎
-- 通过 Cloudflare DNS API 签发主域名与泛域名证书
+- 通过 `acme.sh` 支持 `dns_cf`、`dns_ali`、`dns_dp`
+- 当 `acme.sh` 不可用时，仅 `dns_cf` 可回退到内置 Python ACME 引擎
+- 通过 Cloudflare、AliDNS、DNSPod 的 DNS API 签发主域名与泛域名证书
 - 仅在证书剩余有效期小于等于 15 天时执行续签
 - 通过 API 提供证书到期时间查询和证书下载
 - 通过客户端脚本自动同步新证书到业务服务器并重启 `xrayr`
@@ -47,9 +50,9 @@ cert_auto_api/
 ### 工作流程
 
 1. 服务端读取 `.env` 配置。
-2. 服务端优先寻找可用的 `acme.sh`，找不到时回退到内置 Python ACME 引擎。
-3. 使用 Cloudflare DNS 验证签发主域名和泛域名证书。
-   相关准备说明见 [docs/cloudflare_wildcard_dns_setup.md](/mnt/f/workwww/cert_auto_api/docs/cloudflare_wildcard_dns_setup.md)。
+2. 服务端优先寻找可用的 `acme.sh`；若找不到且 `ACME_DNS_PROVIDER=dns_cf`，则回退到内置 Python ACME 引擎。
+3. 使用所选 DNS provider 完成 DNS-01 验证并签发主域名和泛域名证书。
+   若使用 Cloudflare，相关准备说明见 [docs/cloudflare_wildcard_dns_setup.md](/mnt/f/workwww/cert_auto_api/docs/cloudflare_wildcard_dns_setup.md)。
 4. 证书保存为 `certificate.cert`，私钥保存为 `private.key`。
 5. 服务端通过定时任务每天检查一次证书有效期。
 6. 当证书剩余有效期小于等于 15 天时自动续签。
@@ -70,8 +73,8 @@ cert_auto_api/
 
 - Linux
 - Python 3.10+
-- `acme.sh` 可选，若不存在则由项目内置引擎接管
-- Cloudflare Token
+- `acme.sh` 推荐安装；若使用 `dns_ali` / `dns_dp` 则必须安装
+- Cloudflare Token、AliDNS 密钥或 DNSPod 密钥
 - `curl`
 - `tar`
 - `openssl`
@@ -104,6 +107,10 @@ API_PREFIX=/api/v1
 
 CERT_DOMAINS=example.com,*.example.com
 CF_TOKEN=replace_with_cloudflare_token
+ALI_KEY=
+ALI_SECRET=
+DP_ID=
+DP_KEY=
 CERT_OUTPUT_DIR=./certs
 RENEW_THRESHOLD_DAYS=15
 
@@ -118,7 +125,10 @@ DNS_POLL_INTERVAL=10
 关键字段：
 
 - `CERT_DOMAINS`：证书域名列表，逗号分隔
-- `CF_TOKEN`：Cloudflare DNS API Token
+- `CF_TOKEN`：Cloudflare DNS API Token，`ACME_DNS_PROVIDER=dns_cf` 时必填
+- `ALI_KEY` / `ALI_SECRET`：阿里云 DNS API 凭据，`ACME_DNS_PROVIDER=dns_ali` 时必填
+- `DP_ID` / `DP_KEY`：DNSPod API 凭据，`ACME_DNS_PROVIDER=dns_dp` 时必填
+- `ACME_DNS_PROVIDER`：支持 `dns_cf`、`dns_ali`、`dns_dp`
 - `API_TOKEN`：访问 API 所需的鉴权 Token
 - `CERT_OUTPUT_DIR`：证书输出目录
 - `RENEW_THRESHOLD_DAYS`：提前多少天触发续签
@@ -132,14 +142,48 @@ DNS_POLL_INTERVAL=10
 - 程序会自动从 `CERT_DOMAINS` 中选择第一个非通配符域名作为主域名
 - 例如 `CERT_DOMAINS=example.com,*.example.com` 时，主域名会自动识别为 `example.com`
 - `acme.sh` 路径不再单独配置，程序会自动识别
+- 如果使用 `dns_ali` 或 `dns_dp`，必须安装可用的 `acme.sh`
+- 当前内置 Python ACME 引擎只支持 `dns_cf`
 - 服务端部署和配置示例见 [docs/server_api_deployment.md](/mnt/f/workwww/cert_auto_api/docs/server_api_deployment.md)
 - 已知问题与后续迭代见 [docs/known_issues_and_future_work.md](/mnt/f/workwww/cert_auto_api/docs/known_issues_and_future_work.md)
 - 本次变更记录见 [CHANGELOG.md](/mnt/f/workwww/cert_auto_api/CHANGELOG.md)
 
+常见 DNS provider 配置示例：
+
+Cloudflare `dns_cf`：
+
+```env
+ACME_DNS_PROVIDER=dns_cf
+CF_TOKEN=your_cloudflare_api_token
+```
+
+阿里云 DNS `dns_ali`：
+
+```env
+ACME_DNS_PROVIDER=dns_ali
+ALI_KEY=your_aliyun_access_key_id
+ALI_SECRET=your_aliyun_access_key_secret
+```
+
+DNSPod `dns_dp`：
+
+```env
+ACME_DNS_PROVIDER=dns_dp
+DP_ID=your_dnspod_api_id
+DP_KEY=your_dnspod_api_key
+```
+
+补充说明：
+
+- 修改 `ACME_DNS_PROVIDER` 时，只保留当前 provider 需要的凭据即可
+- `dns_ali` 和 `dns_dp` 依赖 `acme.sh` 的 DNS API 插件能力
+- 如果未安装 `acme.sh`，只有 `dns_cf` 可以回退到项目内置引擎
+
 证书引擎说明：
 
 - 只要检测到可用的 `acme.sh`，优先使用 `acme.sh`
-- 如果没有可用的 `acme.sh`，则回退到项目内置的 Python ACME 引擎
+- 如果没有可用的 `acme.sh`，且 `ACME_DNS_PROVIDER=dns_cf`，则回退到项目内置的 Python ACME 引擎
+- 如果 `ACME_DNS_PROVIDER=dns_ali` 或 `dns_dp`，则必须安装 `acme.sh`
 - 内置引擎直接使用 Cloudflare API Token 创建 `_acme-challenge` TXT 记录，并把 `fullchain` 和私钥写入 `CERT_OUTPUT_DIR`
 - 宝塔 `acme_v2.py` 不再参与主流程
 
@@ -188,12 +232,14 @@ curl http://127.0.0.1:8080/healthz
 
 ```bash
 curl -L http://127.0.0.1:8080/api/v1/client/download -o cert_auto_api_client.tgz
+tar -xzf cert_auto_api_client.tgz
 ```
 
 或：
 
 ```bash
 wget -O cert_auto_api_client.tgz http://127.0.0.1:8080/api/v1/client/download
+tar -xzf cert_auto_api_client.tgz
 ```
 
 说明：
@@ -362,6 +408,7 @@ chmod 700 /path/to/cert_auto_api/client/install_client_cron.sh
 - 仅在远端证书更新时才下载
 - 下载后解压覆盖目标目录
 - 仅在证书确实变化时才重启 `xrayr`
+- 如果系统使用 `systemd`，重启前会先执行一次 `systemctl daemon-reload`
 - 如果重启失败，错误输出会写入 `DEFAULT_RESTART_LOG_FILE`
 
 客户端 `cron` 说明：
@@ -388,14 +435,17 @@ chmod 700 /path/to/cert_auto_api/client/install_client_cron.sh
 
 ### Overview
 
-`cert_auto_api` is a Python-based certificate issuance, renewal, and distribution service for wildcard certificates. It prefers `acme.sh` and falls back to a built-in Cloudflare API Token ACME engine when `acme.sh` is unavailable.
+`cert_auto_api` is a Python-based wildcard certificate issuance, renewal, and distribution service. It supports `acme.sh` DNS providers including Cloudflare `dns_cf`, AliDNS `dns_ali`, and DNSPod `dns_dp`, and falls back to a built-in Cloudflare API Token ACME engine when `acme.sh` is unavailable.
+
+Keywords: wildcard certificate, wildcard SSL, Let's Encrypt, Cloudflare DNS, AliDNS, DNSPod, `acme.sh`, `dns_cf`, `dns_ali`, `dns_dp`, DNS-01.
 
 It supports:
 
 - BaoTa-installed `acme.sh`
 - Self-installed `acme.sh`
-- Built-in Python ACME fallback for Cloudflare API Token workflows
-- Cloudflare DNS validation
+- `acme.sh` DNS API support for `dns_cf`, `dns_ali`, and `dns_dp`
+- Built-in Python ACME fallback for Cloudflare API Token workflows only
+- Cloudflare, AliDNS, and DNSPod DNS validation through `acme.sh`
 - Automatic renewal for certificates expiring within 15 days
 - API-based certificate status query and download
 - Client-side synchronization with automatic `xrayr` restart
@@ -426,8 +476,8 @@ cert_auto_api/
 ### Workflow
 
 1. The server loads configuration from `.env`.
-2. The server prefers an available `acme.sh` installation and falls back to the built-in Python ACME engine when `acme.sh` is unavailable.
-3. Certificates are issued or renewed through Cloudflare DNS validation.
+2. The server prefers an available `acme.sh` installation; if `acme.sh` is unavailable and `ACME_DNS_PROVIDER=dns_cf`, it falls back to the built-in Python ACME engine.
+3. Certificates are issued or renewed through DNS-01 validation with the selected DNS provider.
    See [docs/cloudflare_wildcard_dns_setup.md](/mnt/f/workwww/cert_auto_api/docs/cloudflare_wildcard_dns_setup.md) for Cloudflare DNS preparation steps.
 4. The fullchain is saved as `certificate.cert`, and the private key as `private.key`.
 5. A scheduled task checks certificate expiration once per day.
@@ -449,8 +499,8 @@ Defense in depth:
 
 - Linux
 - Python 3.10+
-- `acme.sh` is optional; the built-in engine takes over when it is unavailable
-- Cloudflare API Token
+- `acme.sh` is recommended; it is required for `dns_ali` and `dns_dp`
+- Cloudflare API Token, AliDNS credentials, or DNSPod credentials
 - `curl`
 - `tar`
 - `openssl`
@@ -483,6 +533,10 @@ API_PREFIX=/api/v1
 
 CERT_DOMAINS=example.com,*.example.com
 CF_TOKEN=replace_with_cloudflare_token
+ALI_KEY=
+ALI_SECRET=
+DP_ID=
+DP_KEY=
 CERT_OUTPUT_DIR=./certs
 RENEW_THRESHOLD_DAYS=15
 
@@ -497,7 +551,10 @@ DNS_POLL_INTERVAL=10
 Important fields:
 
 - `CERT_DOMAINS`: comma-separated certificate domains
-- `CF_TOKEN`: Cloudflare DNS API token
+- `CF_TOKEN`: Cloudflare DNS API token, required when `ACME_DNS_PROVIDER=dns_cf`
+- `ALI_KEY` / `ALI_SECRET`: AliDNS API credentials, required when `ACME_DNS_PROVIDER=dns_ali`
+- `DP_ID` / `DP_KEY`: DNSPod API credentials, required when `ACME_DNS_PROVIDER=dns_dp`
+- `ACME_DNS_PROVIDER`: supports `dns_cf`, `dns_ali`, and `dns_dp`
 - `API_TOKEN`: token required to access the API
 - `CERT_OUTPUT_DIR`: certificate output directory
 - `RENEW_THRESHOLD_DAYS`: renewal threshold in days
@@ -511,14 +568,48 @@ Notes:
 - The program automatically selects the first non-wildcard entry in `CERT_DOMAINS` as the primary domain.
 - For example, with `CERT_DOMAINS=example.com,*.example.com`, the primary domain is `example.com`.
 - `acme.sh` is detected automatically and no longer configured manually.
+- `acme.sh` must be installed when `ACME_DNS_PROVIDER` is `dns_ali` or `dns_dp`.
+- The built-in Python ACME engine currently supports only `dns_cf`.
 - Server-side deployment examples are documented in [docs/server_api_deployment.md](/mnt/f/workwww/cert_auto_api/docs/server_api_deployment.md).
 - Known issues and future work are documented in [docs/known_issues_and_future_work.md](/mnt/f/workwww/cert_auto_api/docs/known_issues_and_future_work.md).
 - This round of changes is recorded in [CHANGELOG.md](/mnt/f/workwww/cert_auto_api/CHANGELOG.md).
 
+Common DNS provider configuration examples:
+
+Cloudflare `dns_cf`:
+
+```env
+ACME_DNS_PROVIDER=dns_cf
+CF_TOKEN=your_cloudflare_api_token
+```
+
+AliDNS `dns_ali`:
+
+```env
+ACME_DNS_PROVIDER=dns_ali
+ALI_KEY=your_aliyun_access_key_id
+ALI_SECRET=your_aliyun_access_key_secret
+```
+
+DNSPod `dns_dp`:
+
+```env
+ACME_DNS_PROVIDER=dns_dp
+DP_ID=your_dnspod_api_id
+DP_KEY=your_dnspod_api_key
+```
+
+Additional notes:
+
+- Keep only the credentials required by the active provider.
+- `dns_ali` and `dns_dp` rely on `acme.sh` DNS API provider support.
+- Without `acme.sh`, only `dns_cf` can fall back to the built-in engine.
+
 Certificate engine notes:
 
 - if `acme.sh` is available, the project uses `acme.sh`
-- if `acme.sh` is unavailable, the project falls back to the built-in Python ACME engine
+- if `acme.sh` is unavailable and `ACME_DNS_PROVIDER=dns_cf`, the project falls back to the built-in Python ACME engine
+- if `ACME_DNS_PROVIDER` is `dns_ali` or `dns_dp`, `acme.sh` is required
 - the built-in engine uses the Cloudflare API Token flow to create `_acme-challenge` TXT records and writes the resulting `fullchain` and private key into `CERT_OUTPUT_DIR`
 - BaoTa `acme_v2.py` is no longer part of the main issuance path
 
@@ -567,12 +658,14 @@ Download the client template package:
 
 ```bash
 curl -L http://127.0.0.1:8080/api/v1/client/download -o cert_auto_api_client.tgz
+tar -xzf cert_auto_api_client.tgz
 ```
 
 or:
 
 ```bash
 wget -O cert_auto_api_client.tgz http://127.0.0.1:8080/api/v1/client/download
+tar -xzf cert_auto_api_client.tgz
 ```
 
 Notes:
@@ -734,6 +827,7 @@ The client script:
 - downloads only when the remote certificate has changed
 - extracts the bundle into the target directory
 - restarts `xrayr` only when the certificate actually changes
+- runs `systemctl daemon-reload` before restart when `systemd` is available
 - writes restart errors to `DEFAULT_RESTART_LOG_FILE` when restart fails
 
 Client cron behavior:

@@ -9,8 +9,8 @@
 
 - 运行服务端 API
 - 优先调用可用的 `acme.sh`
-- 当 `acme.sh` 不可用时，回退到项目内置的 Python ACME 引擎
-- 使用 Cloudflare DNS API 自动签发和续签证书
+- 使用 Cloudflare、AliDNS、DNSPod 的 DNS API 自动签发和续签证书
+- 当 `acme.sh` 不可用且 `ACME_DNS_PROVIDER=dns_cf` 时，回退到项目内置的 Python ACME 引擎
 
 ## 一、通用要求
 
@@ -18,8 +18,8 @@
 
 - Linux 系统
 - Python 3.10+
-- 已接入 Cloudflare DNS
-- 已准备好 `CF_TOKEN`
+- 已准备好对应 DNS provider 的 API 凭据
+- 若使用 `dns_ali` / `dns_dp`，必须已安装可用的 `acme.sh`
 
 运行用户建议：
 
@@ -41,6 +41,10 @@ API_PREFIX=/api/v1
 
 CERT_DOMAINS=example.com,*.example.com
 CF_TOKEN=replace_with_cloudflare_token
+ALI_KEY=
+ALI_SECRET=
+DP_ID=
+DP_KEY=
 CERT_OUTPUT_DIR=./certs
 RENEW_THRESHOLD_DAYS=15
 
@@ -55,9 +59,42 @@ DNS_POLL_INTERVAL=10
 说明：
 
 - `CERT_DOMAINS` 填写主域名和泛域名
-- `CF_TOKEN` 为 Cloudflare API Token
+- `CF_TOKEN` 为 Cloudflare API Token，仅 `dns_cf` 使用
+- `ALI_KEY` / `ALI_SECRET` 为 AliDNS API 凭据，仅 `dns_ali` 使用
+- `DP_ID` / `DP_KEY` 为 DNSPod API 凭据，仅 `dns_dp` 使用
+- `ACME_DNS_PROVIDER` 支持 `dns_cf`、`dns_ali`、`dns_dp`
 - `CERT_OUTPUT_DIR` 为服务端 fullchain 和私钥输出目录
 - `RENEW_THRESHOLD_DAYS` 一般保持 `15`
+
+常见配置示例：
+
+Cloudflare `dns_cf`：
+
+```env
+ACME_DNS_PROVIDER=dns_cf
+CF_TOKEN=your_cloudflare_api_token
+```
+
+阿里云 DNS `dns_ali`：
+
+```env
+ACME_DNS_PROVIDER=dns_ali
+ALI_KEY=your_aliyun_access_key_id
+ALI_SECRET=your_aliyun_access_key_secret
+```
+
+DNSPod `dns_dp`：
+
+```env
+ACME_DNS_PROVIDER=dns_dp
+DP_ID=your_dnspod_api_id
+DP_KEY=your_dnspod_api_key
+```
+
+补充说明：
+
+- 切换 provider 后，建议同步清理不再使用的旧凭据，避免混淆
+- `dns_ali` 和 `dns_dp` 只支持通过 `acme.sh` 申请和续签
 
 ## 二、宝塔环境配置
 
@@ -128,6 +165,10 @@ API_PREFIX=/api/v1
 
 CERT_DOMAINS=example.com,*.example.com
 CF_TOKEN=replace_with_cloudflare_token
+ALI_KEY=
+ALI_SECRET=
+DP_ID=
+DP_KEY=
 CERT_OUTPUT_DIR=./certs
 RENEW_THRESHOLD_DAYS=15
 
@@ -168,6 +209,8 @@ python3 main.py serve
 ```
 
 同时也会尝试 `PATH` 中的 `acme.sh`。
+
+如果你计划使用 `dns_ali` 或 `dns_dp`，这里的 `acme.sh` 不是可选项，而是必需项。
 
 ### 2. 安装 `acme.sh`
 
@@ -211,6 +254,10 @@ API_PREFIX=/api/v1
 
 CERT_DOMAINS=example.com,*.example.com
 CF_TOKEN=replace_with_cloudflare_token
+ALI_KEY=
+ALI_SECRET=
+DP_ID=
+DP_KEY=
 CERT_OUTPUT_DIR=./certs
 RENEW_THRESHOLD_DAYS=15
 
@@ -249,7 +296,7 @@ python3 main.py serve
 
 推荐顺序：
 
-1. 先完成 Cloudflare DNS 接入
+1. 先完成对应 DNS provider 的接入和 API 凭据准备
 2. 配置 `.env`
 3. 手动启动 API
 4. 请求一次 `GET /healthz`
@@ -272,6 +319,10 @@ python3 main.py serve
 优先检查：
 
 - `CF_TOKEN` 是否正确
+- `ALI_KEY` / `ALI_SECRET` 是否正确
+- `DP_ID` / `DP_KEY` 是否正确
+- `ACME_DNS_PROVIDER` 是否与实际 DNS provider 匹配
+- 如果使用 `dns_ali` / `dns_dp`，`acme.sh` 是否已安装且当前运行用户可执行
 - `CERT_DOMAINS` 是否正确
 - Cloudflare DNS 是否已接管
 - 域名 `Nameserver` 是否已切到 Cloudflare
