@@ -237,9 +237,14 @@ class BuiltinAcmeEngine:
         try:
             acme_client.new_account(registration)
         except errors.ConflictError as exc:
+            location = getattr(exc, "location", None)
+            if not location and exc.args:
+                location = exc.args[0]
+            if not location:
+                raise RuntimeError("ACME account conflict did not include an account location") from exc
             existing = messages.RegistrationResource(
                 body=messages.Registration(),
-                uri=getattr(exc, "location", exc.args[0]),
+                uri=location,
             )
             acme_client.query_registration(existing)
 

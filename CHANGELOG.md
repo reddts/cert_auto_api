@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-21
+
+- Fixed built-in ACME renewal account-conflict handling so existing ACME accounts no longer fail with `tuple index out of range`.
+- Added explicit timestamped client sync logs for start, local and remote certificate comparison, `unchanged`, `updated`, skipped restart, and failure details.
+- Added `DEFAULT_RESTART_SERVICES` and `DEFAULT_RELOAD_SERVICES` so client nodes can restart or reload multiple local services after a certificate update.
+- Updated the README with a recommended centralized architecture for one server plus many sync clients, including migration guidance for disabling old local ACME jobs on client nodes.
+
 ## 2026-03-18
 
 - Added `dns_ali` and `dns_dp` support for the `acme.sh` certificate path.

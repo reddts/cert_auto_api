@@ -69,6 +69,29 @@ cert_auto_api/
 - 如果证书目录为空，或证书剩余有效期小于等于 15 天，会在后台触发续签
 - 接口不会等待续签完成，客户端下次轮询到新证书后再下载即可
 
+### 推荐架构
+
+推荐把 `cert_auto_api` 作为唯一证书控制面，统一负责签发、续签和分发，再由多个业务节点通过客户端脚本按需拉取：
+
+- 证书 API 服务端：负责 ACME 账号、DNS-01、证书续签、证书状态查询和证书下载
+- 客户端同步节点：只负责定时轮询 `certificate/info`、在远端证书变化时下载新证书，并执行本机服务重启或重载
+- 业务服务：例如 `XrayR`、`nginx`，只消费本地证书文件，不再各自独立申请证书
+
+推荐的数据流如下：
+
+1. `cert_auto_api` 统一把证书写入服务端 `CERT_OUTPUT_DIR`
+2. 客户端节点通过 `/api/v1/certificate/info` 对比远端到期时间和指纹
+3. 只有检测到远端证书变化时，客户端才调用 `/api/v1/certificate/download`
+4. 客户端解压 `certificate.cert` 与 `private.key`
+5. 客户端按节点配置执行服务动作，例如重启 `XrayR`、重载 `nginx`
+
+客户端切换到集中同步模式后，建议同时满足以下约束：
+
+- 停用客户端节点本地原有的 `acme.sh`、`certbot`、`lego` 或面板自带证书续签任务，避免旧任务再次覆盖同步下来的证书
+- 如果业务程序要求证书文件名为 `certificate.crt`，可将其软链接到 `certificate.cert`
+- 同一节点上如果有多个服务共用同一份证书，优先使用 `DEFAULT_RESTART_SERVICES` 和 `DEFAULT_RELOAD_SERVICES` 统一处理
+- 服务端负责续签，客户端负责分发；客户端不应再自行调用 CA 签发证书
+
 ### 环境要求
 
 - Linux
@@ -358,6 +381,8 @@ chmod 700 /path/to/cert_auto_api/scripts/install_server_cron.sh
 - `DEFAULT_API_TOKEN`
 - `DEFAULT_CERT_DEST_DIR`
 - `DEFAULT_XRAYR_SERVICE_NAME`
+- `DEFAULT_RESTART_SERVICES`
+- `DEFAULT_RELOAD_SERVICES`
 - `DEFAULT_RESTART_LOG_FILE`
 
 建议将客户端脚本固定放在稳定目录，例如：
@@ -372,6 +397,7 @@ chmod 700 /path/to/cert_auto_api/scripts/install_server_cron.sh
 - 写入证书目录
 - 覆盖证书文件
 - 重启 `XrayR`
+- 重载 `nginx` 等依赖同一证书的服务
 
 如果后续移动客户端脚本目录，需要重新安装一次客户端 `cron`。
 
@@ -407,9 +433,24 @@ chmod 700 /path/to/cert_auto_api/client/install_client_cron.sh
 - 对比本地证书信息
 - 仅在远端证书更新时才下载
 - 下载后解压覆盖目标目录
-- 仅在证书确实变化时才重启 `xrayr`
+- 仅在证书确实变化时才执行服务动作
 - 如果系统使用 `systemd`，重启前会先执行一次 `systemctl daemon-reload`
-- 如果重启失败，错误输出会写入 `DEFAULT_RESTART_LOG_FILE`
+- 可通过 `DEFAULT_RESTART_SERVICES` 配置一个或多个需要重启的服务
+- 可通过 `DEFAULT_RELOAD_SERVICES` 配置一个或多个需要重载的服务
+- 如果服务动作失败，底层输出会写入 `DEFAULT_RESTART_LOG_FILE`
+- 如果脚本执行失败，会在标准错误输出中记录失败命令、行号和退出码
+
+客户端日志说明：
+
+- `install_client_cron.sh` 默认把标准输出和标准错误追加到 `/var/log/cert_sync.log`
+- `cert_sync.log` 记录高层同步事件，例如开始同步、远端/本地证书信息、`未变化`、`已更新`、`跳过重启`、失败原因
+- `DEFAULT_RESTART_LOG_FILE` 记录 `systemctl` 或 `service` 的底层输出，适合排查服务重启或重载失败
+
+常见客户端服务动作配置：
+
+- 仅 `XrayR` 使用证书：`DEFAULT_RESTART_SERVICES="XrayR"`，`DEFAULT_RELOAD_SERVICES=""`
+- `XrayR` 与 `nginx` 共用证书：`DEFAULT_RESTART_SERVICES="XrayR"`，`DEFAULT_RELOAD_SERVICES="nginx"`
+- 如果只是验证下载行为，可临时设置 `SKIP_RESTART=1`
 
 客户端 `cron` 说明：
 
@@ -494,6 +535,29 @@ Defense in depth:
 - certificate-related API requests also re-check the certificate state
 - if the certificate is missing or expires within 15 days, the server triggers a background renewal
 - the API does not wait for renewal to finish, so client polling stays lightweight
+
+### Recommended Architecture
+
+Use `cert_auto_api` as the single certificate control plane for issuance, renewal, and distribution, then let multiple business nodes pull certificates on demand:
+
+- certificate API server: owns ACME account state, DNS-01, renewal, status reporting, and certificate downloads
+- client sync nodes: poll `certificate/info`, download only when the remote certificate changes, and perform local service restart or reload actions
+- business services: such as `XrayR` and `nginx`, consume local certificate files only and no longer request certificates independently
+
+Recommended data flow:
+
+1. `cert_auto_api` writes the current certificate into the server-side `CERT_OUTPUT_DIR`
+2. each client compares remote expiration time and fingerprint through `/api/v1/certificate/info`
+3. the client calls `/api/v1/certificate/download` only when the remote certificate has changed
+4. the client extracts `certificate.cert` and `private.key`
+5. the client executes node-specific service actions such as restarting `XrayR` or reloading `nginx`
+
+After a node switches to centralized synchronization, also do the following:
+
+- disable old local `acme.sh`, `certbot`, `lego`, or panel-managed renewal jobs on that node to avoid overwriting synced certificates
+- if a service expects `certificate.crt`, point it to `certificate.cert` with a symlink
+- if multiple services share the same certificate on one node, manage them through `DEFAULT_RESTART_SERVICES` and `DEFAULT_RELOAD_SERVICES`
+- keep issuance on the server side and distribution on the client side; client nodes should not talk to the CA directly anymore
 
 ### Requirements
 
@@ -784,6 +848,8 @@ Edit the default values in `client/sync_cert.sh` first and set your real deploym
 - `DEFAULT_API_TOKEN`
 - `DEFAULT_CERT_DEST_DIR`
 - `DEFAULT_XRAYR_SERVICE_NAME`
+- `DEFAULT_RESTART_SERVICES`
+- `DEFAULT_RELOAD_SERVICES`
 - `DEFAULT_RESTART_LOG_FILE`
 
 Keep the client scripts in a stable directory, for example:
@@ -798,6 +864,7 @@ Run the client script and install the client cron job as `root`, because the cli
 - write the certificate directory
 - replace certificate files
 - restart `XrayR`
+- reload `nginx` or other consumers of the same certificate
 
 If you move the client script directory later, reinstall the client cron job so the cron entry points to the new path.
 
@@ -826,9 +893,24 @@ The client script:
 - compares them with the local certificate
 - downloads only when the remote certificate has changed
 - extracts the bundle into the target directory
-- restarts `xrayr` only when the certificate actually changes
+- performs service actions only when the certificate actually changes
 - runs `systemctl daemon-reload` before restart when `systemd` is available
-- writes restart errors to `DEFAULT_RESTART_LOG_FILE` when restart fails
+- supports one or more restart targets through `DEFAULT_RESTART_SERVICES`
+- supports one or more reload targets through `DEFAULT_RELOAD_SERVICES`
+- writes low-level restart or reload output to `DEFAULT_RESTART_LOG_FILE`
+- reports the failing command, line number, and exit code on script errors
+
+Client logging:
+
+- `install_client_cron.sh` appends stdout and stderr to `/var/log/cert_sync.log` by default
+- `cert_sync.log` records high-level sync events such as start, local and remote certificate details, `unchanged`, `updated`, `restart skipped`, and failure reasons
+- `DEFAULT_RESTART_LOG_FILE` stores the low-level `systemctl` or `service` output that is useful when service restart or reload fails
+
+Common service-action configurations:
+
+- `XrayR` only: `DEFAULT_RESTART_SERVICES="XrayR"` and `DEFAULT_RELOAD_SERVICES=""`
+- shared `XrayR` + `nginx` certificate: `DEFAULT_RESTART_SERVICES="XrayR"` and `DEFAULT_RELOAD_SERVICES="nginx"`
+- download-only validation: set `SKIP_RESTART=1` temporarily
 
 Client cron behavior:
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 umask 077
 
@@ -13,6 +13,8 @@ DEFAULT_CERT_FILE_NAME="certificate.cert"
 DEFAULT_KEY_FILE_NAME="private.key"
 DEFAULT_SKIP_RESTART="0"
 DEFAULT_RESTART_LOG_FILE="/var/log/cert_sync_restart.log"
+DEFAULT_RESTART_SERVICES=""
+DEFAULT_RELOAD_SERVICES=""
 
 # Runtime configuration. Environment variables still override these defaults.
 API_BASE_URL="${API_BASE_URL:-$DEFAULT_API_BASE_URL}"
@@ -23,9 +25,33 @@ CERT_FILE_NAME="${CERT_FILE_NAME:-$DEFAULT_CERT_FILE_NAME}"
 KEY_FILE_NAME="${KEY_FILE_NAME:-$DEFAULT_KEY_FILE_NAME}"
 SKIP_RESTART="${SKIP_RESTART:-$DEFAULT_SKIP_RESTART}"
 RESTART_LOG_FILE="${RESTART_LOG_FILE:-$DEFAULT_RESTART_LOG_FILE}"
+RESTART_SERVICES="${RESTART_SERVICES:-$DEFAULT_RESTART_SERVICES}"
+RELOAD_SERVICES="${RELOAD_SERVICES:-$DEFAULT_RELOAD_SERVICES}"
+
+timestamp() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+log() {
+  printf '[%s] %s\n' "$(timestamp)" "$*"
+}
+
+log_error() {
+  printf '[%s] %s\n' "$(timestamp)" "$*" >&2
+}
+
+on_error() {
+  local line_no="$1"
+  local command="$2"
+  local exit_code="$3"
+  log_error "certificate sync failed at line ${line_no}: ${command} (exit ${exit_code})"
+  exit "$exit_code"
+}
+
+trap 'on_error "${LINENO}" "${BASH_COMMAND}" "$?"' ERR
 
 if [[ -z "$API_TOKEN" ]]; then
-  echo "API_TOKEN is required" >&2
+  log_error "API_TOKEN is required"
   exit 1
 fi
 
@@ -35,6 +61,8 @@ cleanup() {
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
+
+log "starting certificate sync from ${API_BASE_URL}"
 
 auth_header=("Authorization: Bearer ${API_TOKEN}")
 info_json="$tmp_dir/info.json"
@@ -82,8 +110,16 @@ PY
   local_fingerprint="$(openssl x509 -in "$local_cert_path" -noout -fingerprint -sha256 | awk -F= '{print tolower($2)}' | tr -d ':')"
 fi
 
+if [[ -n "$local_expires_at" ]]; then
+  log "local certificate expires_at=${local_expires_at} fingerprint_sha256=${local_fingerprint}"
+else
+  log "local certificate is missing at ${local_cert_path}"
+fi
+
+log "remote certificate expires_at=${remote_expires_at:-unknown} fingerprint_sha256=${remote_fingerprint:-missing}"
+
 if [[ -n "$remote_expires_at" && "$remote_expires_at" == "$local_expires_at" && "$remote_fingerprint" == "$local_fingerprint" ]]; then
-  echo "certificate unchanged; restart skipped"
+  log "certificate unchanged; restart skipped"
   exit 0
 fi
 
@@ -95,10 +131,10 @@ tar -xzf "$archive_path" -C "$CERT_DEST_DIR"
 chmod 644 "${CERT_DEST_DIR}/${CERT_FILE_NAME}"
 chmod 600 "${CERT_DEST_DIR}/${KEY_FILE_NAME}"
 
-echo "certificate updated"
+log "certificate updated at ${CERT_DEST_DIR}/${CERT_FILE_NAME}"
 
 if [[ "$SKIP_RESTART" == "1" ]]; then
-  echo "certificate updated; restart skipped because SKIP_RESTART=1"
+  log "restart skipped because SKIP_RESTART=1"
   exit 0
 fi
 
@@ -107,18 +143,47 @@ mkdir -p "$restart_log_dir"
 
 if command -v systemctl >/dev/null 2>&1; then
   if ! systemctl daemon-reload >>"$RESTART_LOG_FILE" 2>&1; then
-    echo "systemd daemon-reload failed; see $RESTART_LOG_FILE" >&2
+    log_error "systemd daemon-reload failed; see $RESTART_LOG_FILE"
     exit 1
   fi
-  if ! systemctl restart "$XRAYR_SERVICE_NAME" >>"$RESTART_LOG_FILE" 2>&1; then
-    echo "service restart failed; see $RESTART_LOG_FILE" >&2
-    exit 1
+  log "systemd daemon-reload completed"
+
+  if [[ -z "$RESTART_SERVICES" && -n "$XRAYR_SERVICE_NAME" ]]; then
+    RESTART_SERVICES="$XRAYR_SERVICE_NAME"
   fi
+
+  for service_name in $RESTART_SERVICES; do
+    if ! systemctl restart "$service_name" >>"$RESTART_LOG_FILE" 2>&1; then
+      log_error "service restart failed for ${service_name}; see $RESTART_LOG_FILE"
+      exit 1
+    fi
+    log "service restarted: ${service_name}"
+  done
+
+  for service_name in $RELOAD_SERVICES; do
+    if ! systemctl reload "$service_name" >>"$RESTART_LOG_FILE" 2>&1; then
+      log_error "service reload failed for ${service_name}; see $RESTART_LOG_FILE"
+      exit 1
+    fi
+    log "service reloaded: ${service_name}"
+  done
 else
-  if ! service "$XRAYR_SERVICE_NAME" restart >>"$RESTART_LOG_FILE" 2>&1; then
-    echo "service restart failed; see $RESTART_LOG_FILE" >&2
+  if [[ -n "$RELOAD_SERVICES" ]]; then
+    log_error "service reload failed because RELOAD_SERVICES requires systemctl; see $RESTART_LOG_FILE"
     exit 1
   fi
+
+  if [[ -z "$RESTART_SERVICES" && -n "$XRAYR_SERVICE_NAME" ]]; then
+    RESTART_SERVICES="$XRAYR_SERVICE_NAME"
+  fi
+
+  for service_name in $RESTART_SERVICES; do
+    if ! service "$service_name" restart >>"$RESTART_LOG_FILE" 2>&1; then
+      log_error "service restart failed for ${service_name}; see $RESTART_LOG_FILE"
+      exit 1
+    fi
+    log "service restarted: ${service_name}"
+  done
 fi
 
-echo "service restarted successfully"
+log "service actions completed successfully"
